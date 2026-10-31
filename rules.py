@@ -82,7 +82,7 @@ def plan(req, model_plan=None):
     elif root == "dependency_certificate_expired":
         dep = first(r"\b(dep_[a-z0-9]+)\b", text)
         diags = [("dependency_status", {"dependency": dep}, cite(r"certificate|dep_"))]
-        effect = ("open_incident", {"service": dep or svc, "severity": sev})
+        effect = ("open_incident", {"service": svc, "severity": sev})
     elif root == "feature_flag_recursion":
         flag = first(r"\b(flag_[a-z0-9]+)\b", text)
         diags = [("query_logs", {"service": svc, "query": f"recursive evaluation {flag}", "windowMinutes": 60},
@@ -104,6 +104,28 @@ def plan(req, model_plan=None):
                  ("scale_service", {"service": svc, "targetReplicas": int(n)})
     elif root == "secret_rotation_mismatch":
         diags = [("read_runbook", {"service": svc, "topic": "secret rotation"}, cite(r"runbook|secret version"))]
+        effect = ("page_owner", {"service": svc, "severity": sev})
+    # Runbook rule: a runbook REQUIRED before acting is the only (prerequisite) diagnostic; a runbook that is merely
+    # mentioned is an extra independent read-only diagnostic (run in parallel).
+    rb = [(i, t) for i, t in sig if re.search(r"runbook", t, re.I)]
+    if rb and "read_runbook" in cat and "read_runbook" not in effects:
+        req_line = next(((i, t) for i, t in rb if re.search(r"required before|must be (read|consulted)|before (paging|acting|changing|any)", t, re.I)), None)
+        rbd = ("read_runbook", {"service": svc, "topic": root}, [(req_line or rb[0])[0]])
+        if req_line:
+            diags = [rbd]
+        elif not any(d[0] == "read_runbook" for d in diags) and len(diags) < 3:
+            diags = diags + [rbd]
+    # Policy gates quoted in the evidence: freeze / contract maximum / delegation / remaining changes -> page the owner
+    def num(rx):
+        m = re.search(rx, text, re.I)
+        return int(m.group(1)) if m else None
+    freeze, cmax, target = num(r"freeze\s*=\s*(\d+)"), num(r"contract maximum\s*=\s*(\d+)"), num(r"(?:proposed\s+)?target\s*=\s*(\d+)")
+    deleg, remaining = num(r"delegation\s*=\s*(\d+)"), num(r"remaining[^=;.]*=\s*(\d+)")
+    if effect and effect[0] == "scale_service" and freeze is not None and cmax is not None and target is not None:
+        effect = ("scale_service", {"service": svc, "targetReplicas": target}) if (cmax >= target and freeze == 0) \
+            else ("page_owner", {"service": svc, "severity": sev})
+    if effect and effect[0] in ("rollback_deployment", "disable_feature", "scale_service") and deleg is not None \
+            and freeze is not None and remaining is not None and not (deleg == 1 and freeze == 0 and remaining > 0):
         effect = ("page_owner", {"service": svc, "severity": sev})
     if not diags or not effect or any(v in (None, "") for _, a, _ in diags for v in a.values()):
         return None

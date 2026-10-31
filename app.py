@@ -397,6 +397,8 @@ def public_view(st):
     if st["status"] == "waiting":
         base["dispatches"] = st["pendingDispatches"]
         base["approvals"] = st["pendingApprovals"]
+        base["actionLog"] = st["actionLog"]          # mandatory arrays in every response
+        base["receiptLog"] = st["receiptLog"]
         return base
     base.update({"chosenEffect": st["chosenEffect"], "suppressed": st["suppressed"],
                  "actionLog": st["actionLog"], "receiptLog": st["receiptLog"], "otlp": build_otlp(st),
