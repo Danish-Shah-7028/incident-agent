@@ -706,6 +706,15 @@ async def router(request: Request):
     method = request.method
     raw = await request.body()
     try:
+        if DEBUG_KEY and path == f"/debug/{DEBUG_KEY}/runs" and method == "GET":
+            out = []
+            for (stt,) in db.execute("SELECT state FROM runs ORDER BY rowid").fetchall():
+                st = json.loads(stt)
+                out.append({"runId": st["runId"], "status": st["status"], "model": {k: st["model"].get(k) for k in ("ok", "error")},
+                            "modelName": LLM_MODEL, "baseUrl": LLM_BASE_URL, "keySet": bool(LLM_API_KEY),
+                            "diagnosis": st["diagnosis"], "effect": st["effect"],
+                            "diagnostics": [(a["toolName"], a["arguments"]) for a in st["actions"]]})
+            return Response(json.dumps(out, indent=1).encode(), 200, media_type="application/json")
         if DEBUG_KEY and path == f"/debug/{DEBUG_KEY}" and method == "GET":
             rows = db.execute("SELECT ts, method, path, status, headers, request, response FROM debug ORDER BY id").fetchall()
             out = []

@@ -29,21 +29,30 @@ def signal_lines(transcript):
     return uniq if 2 <= len(uniq) <= 6 else None
 
 
-ROOT_RULES = [
-    ("secret_rotation_mismatch", r"secret version|vault promoted|revoked the old credential|credential rotation"),
-    ("dependency_certificate_expired", r"certificate"),
-    ("feature_flag_recursion", r"\bflag\b.*(loop|recurs)|recurs.*\bflag\b|flag rule"),
-    ("database_connection_exhaustion", r"connection (pool|ceiling)|pool (checkout|acquisition)|connection ceiling"),
-    ("traffic_capacity_exhaustion", r"queue depth|per-replica|requests per second|capacity ceiling"),
-    ("deployment_regression", r"\brelease\b|\brollout\b"),
-]
+ROOT_KEYWORDS = {
+    "deployment_regression": [r"\brelease\b", r"\brollout\b", r"rolled out", r"holdback", r"canary", r"\br\d+-\w+", r"reversion", r"release transition"],
+    "database_connection_exhaustion": [r"connection pool", r"pool checkout", r"pool acquisition", r"connection ceiling", r"database connections?", r"\bpools?\b"],
+    "dependency_certificate_expired": [r"certificate", r"\btls\b", r"notafter", r"expired", r"\bdep_[a-z0-9]+"],
+    "feature_flag_recursion": [r"\bflag", r"cohort", r"recurs", r"\bloop", r"evaluation path", r"depth guard"],
+    "traffic_capacity_exhaustion": [r"queue depth", r"requests per second", r"\brps\b", r"per-replica", r"utili[sz]ation", r"capacity ceiling", r"traffic"],
+    "secret_rotation_mismatch": [r"\bsecret", r"credential", r"\bvault\b", r"rotation", r"revo(ke|ked|cation)", r"generation \d+"],
+}
+EXCLUDE_SENTENCE = re.compile(r"\b(no|none|not|unchanged|normal|normally|healthy|stable|remain(s|ed)?|continue to operate|ordinary)\b", re.I)
 
 
 def classify(text, allowed):
-    for name, rx in ROOT_RULES:
-        if name in allowed and re.search(rx, text, re.I):
-            return name
-    return None
+    """Score root causes on the operative lines, ignoring sentences that only rule causes out."""
+    sents = [s for s in re.split(r"(?<=[.;])\s+", text) if not EXCLUDE_SENTENCE.search(s)]
+    pos = " ".join(sents)
+    best, best_score = None, 0
+    for name in allowed:
+        kws = ROOT_KEYWORDS.get(name)
+        if not kws:
+            continue
+        score = sum(len(re.findall(k, pos, re.I)) for k in kws)
+        if score > best_score:
+            best, best_score = name, score
+    return best
 
 
 def first(rx, text, g=1):
@@ -109,9 +118,9 @@ def plan(req, model_plan=None):
         effect = ("page_owner", {"service": svc, "severity": sev})
     # Runbook rule: a runbook REQUIRED before acting is the only (prerequisite) diagnostic; a runbook that is merely
     # mentioned is an extra independent read-only diagnostic (run in parallel).
-    rb = [(i, t) for i, t in sig if re.search(r"runbook", t, re.I)]
+    rb = [(i, t) for i, t in sig if re.search(r"runbook|playbook", t, re.I)]
     if rb and "read_runbook" in cat and "read_runbook" not in effects:
-        req_line = next(((i, t) for i, t in rb if re.search(r"required before|must be (read|consulted)|before (paging|acting|changing|any)", t, re.I)), None)
+        req_line = next(((i, t) for i, t in rb if re.search(r"(runbook|playbook)[^.]*\b(is required|required before|must be (read|consulted|checked))|before (paging|acting|changing|any)|mandatory lookup", t, re.I)), None)
         rbd = ("read_runbook", {"service": svc, "topic": root}, [(req_line or rb[0])[0]])
         if req_line:
             diags = [rbd]
