@@ -33,7 +33,7 @@ PROFILE = "ga5-incident-agent/v2"
 LLM_BASE_URL = os.getenv("LLM_BASE_URL", "https://aipipe.org/openai/v1").rstrip("/")
 LLM_API_KEY = os.getenv("LLM_API_KEY", "")
 LLM_MODEL = os.getenv("LLM_MODEL", "gpt-4.1-mini")
-LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "12"))
+LLM_TIMEOUT = float(os.getenv("LLM_TIMEOUT", "13"))
 MOCK_LLM = os.getenv("MOCK_LLM") == "1"
 DEBUG_KEY = os.getenv("DEBUG_KEY", "").strip()
 DB_PATH = os.getenv("DB_PATH", "/tmp/incident_agent.db")
@@ -228,8 +228,8 @@ async def call_model(view: dict, timeout: float) -> dict:
     payload = {"model": LLM_MODEL, "temperature": 0, "response_format": {"type": "json_object"},
                "messages": [{"role": "system", "content": PLAN_PROMPT},
                             {"role": "user", "content": json.dumps(view, ensure_ascii=False)}]}
-    if "generativelanguage" in LLM_BASE_URL and "2.5-flash" in LLM_MODEL:
-        payload["reasoning_effort"] = "none"            # Gemini: skip slow "thinking" (18 s request budget)
+    if "generativelanguage" in LLM_BASE_URL:            # Gemini: keep "thinking" short (18 s request budget)
+        payload["reasoning_effort"] = "none" if "2.5-flash" in LLM_MODEL else "low"
     async with httpx.AsyncClient(timeout=timeout) as c:
         r = await c.post(f"{LLM_BASE_URL}/chat/completions", json=payload,
                          headers={"Authorization": f"Bearer {LLM_API_KEY}"})
