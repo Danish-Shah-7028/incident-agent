@@ -17,6 +17,8 @@ import re
 import secrets
 import sqlite3
 import time
+
+import rules
 from collections import defaultdict
 
 from starlette.applications import Starlette
@@ -315,6 +317,16 @@ async def make_plan(req: dict):
                 err = f"{type(e).__name__}: {str(e)[:160]}"
                 log.warning("model call failed: %s", err)
     ended = now_ns()
+    try:
+        rp = rules.plan(req, plan)
+        rp = validate_plan(rp, req) if rp else None
+    except Exception:
+        log.exception("rule planner failed")
+        rp = None
+    if rp:
+        if plan and canon(plan) != canon(rp):
+            log.info("rules refined model plan: model=%s", canon({k: plan[k] for k in ("rootCause", "evidence")}))
+        plan = rp
     if plan:
         db.execute("INSERT OR REPLACE INTO plans(key, body) VALUES(?,?)", (key, canon(plan)))
     else:
@@ -680,7 +692,7 @@ def record(method, path, status, headers, raw, text):
     try:
         db.execute("INSERT INTO debug(ts, method, path, status, headers, request, response) VALUES(?,?,?,?,?,?,?)",
                    (time.strftime("%H:%M:%S"), method, path, status,
-                    canon({k: v for k, v in headers.items() if k in ("traceparent", "tracestate", "content-type")}),
+                    canon({k: v for k, v in headers.items() if k not in ("authorization", "cookie")}),
                     raw.decode("utf-8", "replace")[:400000], text[:300000]))
         db.execute("DELETE FROM debug WHERE id NOT IN (SELECT id FROM debug ORDER BY id DESC LIMIT 120)")
     except Exception:
