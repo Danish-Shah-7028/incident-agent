@@ -65,7 +65,11 @@ def plan(req, model_plan=None):
         return None
     svc = inc.get("service") or first(r"\b(svc_[a-z0-9]+)\b", text)
     sev = inc.get("severity") or "SEV-1"
-    ev = [i for i, _ in sig][:4]
+    def ts(t):
+        m = re.search(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2})?", t)
+        return m.group(0) if m else ""
+    cue = max(sig, key=lambda l: ts(l[1]))[0] if len(sig) >= 3 and all(ts(t) for _, t in sig) else None
+    ev = [i for i, _ in sig if i != cue][:4]
     ids = {i: t for i, t in sig}
 
     def cite(rx):
@@ -90,9 +94,7 @@ def plan(req, model_plan=None):
         effect = ("disable_feature", {"service": svc, "flag": flag})
     elif root == "database_connection_exhaustion":
         diags = [("query_metrics", {"service": svc, "metric": "connection_pool_wait", "windowMinutes": 60},
-                  cite(r"pool checkout|connection ceiling")),
-                 ("query_logs", {"service": svc, "query": "pool acquisition timeout", "windowMinutes": 60},
-                  cite(r"logs|acquisition"))]
+                  cite(r"pool checkout|connection ceiling"))]
         n = first(r"exactly (\d+) (?:application )?replicas", text)
         effect = ("scale_service", {"service": svc, "targetReplicas": int(n)}) if n else ("page_owner", {"service": svc, "severity": sev})
     elif root == "traffic_capacity_exhaustion":
@@ -113,8 +115,7 @@ def plan(req, model_plan=None):
         rbd = ("read_runbook", {"service": svc, "topic": root}, [(req_line or rb[0])[0]])
         if req_line:
             diags = [rbd]
-        elif not any(d[0] == "read_runbook" for d in diags) and len(diags) < 3:
-            diags = diags + [rbd]
+        # a runbook that is only mentioned does not need its own call (minimal diagnostics)
     # Policy gates quoted in the evidence: freeze / contract maximum / delegation / remaining changes -> page the owner
     def num(rx):
         m = re.search(rx, text, re.I)
